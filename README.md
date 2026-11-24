@@ -14,4 +14,6 @@ Telegram-бот для запису в барбершоп.
 3. pip install -r requirements.txt
 4. python bot.py
 
+/report і автозвіт щопонеділка для власника.
+
 Стек: Python, aiogram 3.
