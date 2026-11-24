@@ -7,6 +7,7 @@ Black Fox Booking — Telegram-бот запису в барбершоп (дем
 import asyncio
 import json
 import os
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -83,6 +84,35 @@ def free_slots(master: str, date: str) -> list[str]:
 def pretty_date(date: str) -> str:
     d = datetime.strptime(date, "%Y-%m-%d")
     return f"{WEEKDAYS[d.weekday()]} {d.strftime('%d.%m')}"
+
+
+def build_report(days: int = 7) -> str:
+    """Зведення для власника: нові записи, виручка, популярні послуги/майстри."""
+    now = datetime.now()
+    since = now - timedelta(days=days)
+    all_bookings = load_bookings()
+
+    recent = [
+        b for b in all_bookings if datetime.fromisoformat(b["created"]) >= since
+    ]
+    today = now.strftime("%Y-%m-%d")
+    week_end = (now + timedelta(days=days)).strftime("%Y-%m-%d")
+    upcoming = [b for b in all_bookings if today <= b["date"] <= week_end]
+
+    lines = [f"📊 Звіт за {days} днів", ""]
+    lines.append(f"Нових записів: {len(recent)}")
+    lines.append(f"Орієнтовна виручка: {sum(b['price'] for b in recent)} ₴")
+
+    if recent:
+        lines += ["", "Популярні послуги:"]
+        for service, count in Counter(b["service"] for b in recent).most_common(3):
+            lines.append(f"• {service} — {count}")
+        lines += ["", "Записи по майстрах:"]
+        for master, count in Counter(b["master"] for b in recent).most_common():
+            lines.append(f"• {master} — {count}")
+
+    lines += ["", f"Записів на найближчі {days} днів: {len(upcoming)}"]
+    return "\n".join(lines)
 
 
 # ---------- Клавіатури ----------
@@ -296,12 +326,41 @@ async def list_bookings(message: Message):
     await message.answer("\n".join(lines))
 
 
+@dp.message(Command("report"))
+async def cmd_report(message: Message):
+    """Звіт за тиждень на вимогу — тільки для адміна."""
+    if str(message.from_user.id) != os.environ.get("ADMIN_ID"):
+        return
+    await message.answer(build_report())
+
+
+async def weekly_report_loop(bot: Bot) -> None:
+    """Щопонеділка о 9:00 надсилає адміну тижневий звіт."""
+    last_sent = None
+    while True:
+        try:
+            now = datetime.now()
+            admin_id = os.environ.get("ADMIN_ID")
+            if (
+                admin_id
+                and now.weekday() == 0
+                and now.hour == 9
+                and last_sent != now.date()
+            ):
+                await bot.send_message(int(admin_id), build_report())
+                last_sent = now.date()
+        except Exception as error:  # звіт не повинен ламати бота
+            print("Помилка тижневого звіту:", error)
+        await asyncio.sleep(60)
+
+
 async def main() -> None:
     load_env()
     token = os.environ.get("BOT_TOKEN")
     if not token:
         raise SystemExit("Не знайдено BOT_TOKEN. Додай його у файл .env")
     bot = Bot(token)
+    asyncio.create_task(weekly_report_loop(bot))
     print("Бот запущено. Зупинити: Ctrl+C")
     await dp.start_polling(bot)
 
